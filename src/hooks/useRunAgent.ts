@@ -211,8 +211,8 @@ export function useRunAgent(ctx: RunAgentContext) {
     draftText: string, draftAttachments: File[], responsesInput?: unknown,
     previousResponseId?: string, executionMode?: RuntimeExecutionMode,
     outboxRequestId?: string,
-  ) => {
-    if (outboxRequestId && outboxRequestsRef.current.has(outboxRequestId)) return;
+  ): Promise<boolean> => {
+    if (outboxRequestId && outboxRequestsRef.current.has(outboxRequestId)) return false;
     // Capture the owner before the first await. Navigation can happen while a
     // legacy CreateSession or an attachment upload is still pending.
     const owner = getOwner();
@@ -221,7 +221,9 @@ export function useRunAgent(ctx: RunAgentContext) {
       text: draftText, attachments: [...draftAttachments], responsesInput, previousResponseId, executionMode,
       optimisticMessageId: appendOptimisticMessage({ text: draftText, attachments: draftAttachments }),
     };
-    const ledger = owner.conversationId && outbox ? outbox : undefined;
+    // Legacy approval/resume inputs are tracked by the interaction store, not
+    // the text outbox, which cannot persist their protocol payload for replay.
+    const ledger = responsesInput === undefined && owner.conversationId && outbox ? outbox : undefined;
     const outboxEntry = owner.conversationId && ledger
       ? ledger.enqueue({
           requestId: outboxRequestId,
@@ -294,10 +296,17 @@ export function useRunAgent(ctx: RunAgentContext) {
       if (!accepted) useStreamingStore.getState().setSessionStreaming(owner.sessionId || owner.conversationId, false);
       return accepted;
     };
-    if (!launch() && responsesInput === undefined) {
+    const started = launch();
+    if (!started && responsesInput === undefined) {
       owner.queue.push({ draft, launch });
       publishQueue(owner);
+      // Ordinary user turns are accepted into the owner queue even when the
+      // engine is busy.  Resume/approval inputs are deliberately never queued
+      // because replaying them against a later run could approve the wrong
+      // request; callers need the false result to keep the interaction retryable.
+      return true;
     }
+    return started;
   }, [appendOptimisticAssistant, appendOptimisticMessage, config, currentSessionIdRef, drainQueue, getOwner, onRunSettled, onSessionCreated, outbox, publishQueue, waitForPendingSessionCreation]);
 
   const stopGeneration = useCallback(() => {

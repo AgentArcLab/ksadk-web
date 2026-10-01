@@ -22,7 +22,7 @@ type UseFeedbackContext = {
     attachments: File[],
     responsesInput?: unknown,
     previousResponseId?: string,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
 };
 
 export function useFeedback(ctx: UseFeedbackContext) {
@@ -120,12 +120,26 @@ export function useFeedback(ctx: UseFeedbackContext) {
   );
 
   const respondToApproval = useCallback(
-    (options: {
+    async (options: {
       approvalRequestId: string;
       approve: boolean;
       previousResponseId?: string;
-    }) => {
-      if (!options.approvalRequestId || isStreaming) return;
+    }): Promise<boolean> => {
+      if (!options.approvalRequestId || isStreaming) return false;
+      const accepted = await submitDraft(
+        '',
+        [],
+        [
+          {
+            type: 'mcp_approval_response',
+            approval_request_id: options.approvalRequestId,
+            approve: options.approve,
+          },
+        ],
+        options.previousResponseId,
+      );
+      if (!accepted) return false;
+
       useMessageStore.getState().patchMessages((prev) =>
         prev.map((message) => {
           const approvalStatus = options.approve ? 'approved' : 'rejected';
@@ -163,18 +177,7 @@ export function useFeedback(ctx: UseFeedbackContext) {
           };
         }),
       );
-      void submitDraft(
-        '',
-        [],
-        [
-          {
-            type: 'mcp_approval_response',
-            approval_request_id: options.approvalRequestId,
-            approve: options.approve,
-          },
-        ],
-        options.previousResponseId,
-      );
+      return true;
     },
     [isStreaming, submitDraft],
   );

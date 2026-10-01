@@ -229,7 +229,7 @@ export function useAgentChat(options: AgentChatOptions = {}) {
     interactionV1Enabled: Boolean(uiCapabilities.InteractionV1),
     onAcceptedInteraction: followAcceptedInteraction,
     legacyResponsesApproval: (approvalRequestId, approve) => {
-      respondToApprovalRef.current({ approvalRequestId, approve });
+      return respondToApprovalRef.current({ approvalRequestId, approve });
     },
     legacyAguiResume: (interruptId, status) => (
       respondToAguiApprovalRef.current({ interruptId, approve: status === 'resolved' })
