@@ -143,10 +143,13 @@ export class InteractionStore {
   /** Locally mark a record as resolving while a submit is in flight. */
   markResolving(sessionId: string, interactionId: string): void {
     const existing = this.get(sessionId, interactionId);
-    if (!existing || existing.status !== 'pending') return;
+    if (!existing || (existing.status !== 'pending' && existing.status !== 'failed')) return;
     this.records.set(this.key(sessionId, interactionId), {
       ...existing,
       status: 'resolving',
+      extensions: Object.fromEntries(
+        Object.entries(existing.extensions).filter(([key]) => key !== 'submit_error'),
+      ),
     });
     this.emit({
       type: 'interaction_updated',

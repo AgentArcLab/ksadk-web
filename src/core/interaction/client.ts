@@ -13,6 +13,7 @@
  */
 import {
   interactionIdempotencyKey,
+  isTerminalInteraction,
   summarizeResponse,
   type Interaction,
   type InteractionAction,
@@ -47,7 +48,10 @@ export type InteractionClientDeps = {
    */
   interactionV1Enabled?: boolean;
   /** @deprecated 0.3.1 Responses `mcp_approval_response` fallback. */
-  legacyResponsesApproval?: (interactionId: string, approve: boolean) => void;
+  legacyResponsesApproval?: (
+    interactionId: string,
+    approve: boolean,
+  ) => boolean | void | Promise<boolean | void>;
   /** @deprecated 0.3.1 AG-UI `resumeAguiInterrupt` fallback. */
   legacyAguiResume?: (
     interruptId: string,
@@ -176,10 +180,18 @@ export class InteractionClientImpl implements InteractionClient {
 
     try {
       if (!useInteractionV1 && record.source === 'responses' && this.deps.legacyResponsesApproval) {
-        this.deps.legacyResponsesApproval(
+        const dispatched = await this.deps.legacyResponsesApproval(
           input.interactionId,
           input.action === 'approve',
         );
+        if (dispatched === false) {
+          this.store.markFailed(record.sessionId, input.interactionId, {
+            code: 'interaction_not_dispatched',
+            message: '交互尚未提交，请稍后重试。',
+            retryable: true,
+          });
+          return syntheticReceipt('rejected', input.interactionId);
+        }
         this.resolveLocal(record, input, idempotencyKey);
         return syntheticReceipt('accepted', input.interactionId);
       }
@@ -256,6 +268,11 @@ export class InteractionClientImpl implements InteractionClient {
     input: InteractionSubmitInput,
     idempotencyKey: string,
   ): void {
+    // An authoritative terminal event may arrive while an asynchronous legacy
+    // callback is completing. Preserve that server fact rather than replacing
+    // it with this callback's optimistic decision.
+    const current = this.store.get(record.sessionId, input.interactionId);
+    if (!current || isTerminalInteraction(current.status)) return;
     const terminalStatus =
       input.action === 'cancel' ? 'cancelled' : 'resolved';
     this.store.resolveLocally(record.sessionId, input.interactionId, {
