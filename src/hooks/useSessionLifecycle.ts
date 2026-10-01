@@ -4,7 +4,7 @@ import { useMessageStore } from '../stores/message.js';
 import { useUIStore } from '../stores/ui.js';
 import { useCheckpointStore } from '../stores/checkpoint.js';
 import { useBootstrapStore } from '../stores/bootstrap.js';
-import { CancelledError } from '../api/client.js';
+import { ApiError, CancelledError } from '../api/client.js';
 import {
   eventHasTerminalRunStatus,
   maxSeqIdFromEvents,
@@ -240,6 +240,7 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
       runSubscriptionAbortRef.current = controller;
       let shouldReloadSession = false;
       let terminalStatusSeen = false;
+      let cancelledByCaller = false;
       let afterSeqId = options.afterSeqId;
       const isCurrentSubscription = () => (
         runSubscriptionAbortRef.current === controller
@@ -366,7 +367,47 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
             }
           } catch (error) {
             const isAbortError = error instanceof DOMException && error.name === 'AbortError';
-            if (isAbortError || !isCurrentSubscription()) break;
+            const isCancelledSubscription = isAbortError
+              || error instanceof CancelledError
+              || controller.signal.aborted;
+            if (isCancelledSubscription) {
+              // AgentEngineClient maps an aborted fetch to CancelledError.
+              // Treat that as explicit lifecycle cleanup, rather than a
+              // transient disconnect: otherwise the already-aborted signal
+              // is retried immediately forever (waitForRestoreRetry resolves
+              // synchronously for an aborted signal).
+              terminalStatusSeen = true;
+              cancelledByCaller = true;
+              if (isCurrentSubscription()) {
+                useStreamingStore.getState().stopSessionActivity(
+                  options.sessionId,
+                  '恢复事件订阅已取消。',
+                );
+              }
+              break;
+            }
+            if (!isCurrentSubscription()) break;
+            // Authentication, authorization, and invalid-session responses
+            // cannot be repaired by replaying the same subscription. Retrying
+            // them forever left the UI in a permanent "恢复连接中" state and
+            // generated a request every 500ms after a session expired. Surface
+            // the existing run error/banner path and stop this subscription;
+            // transient network failures and server errors still reconnect.
+            const isPermanentClientError = error instanceof ApiError
+              && error.code >= 400
+              && error.code < 500
+              && error.code !== 408
+              && error.code !== 429;
+            if (isPermanentClientError) {
+              terminalStatusSeen = true;
+              shouldReloadSession = false;
+              dispatchRunEventToStores({
+                type: 'error',
+                sessionId: options.sessionId,
+                error,
+              });
+              break;
+            }
             console.warn('Run event subscription disconnected; retrying:', error);
             useStreamingStore.getState().updateActivity({
               sessionId: options.sessionId,
@@ -382,7 +423,7 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
           }
         }
 
-        if (terminalStatusSeen && isCurrentSubscription()) {
+        if (terminalStatusSeen && !cancelledByCaller && isCurrentSubscription()) {
           dispatchRunEventToStores({ type: 'stream_ended', sessionId: options.sessionId });
         }
       } catch (error) {
