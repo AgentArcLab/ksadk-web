@@ -4,7 +4,7 @@ import { useMessageStore } from '../stores/message.js';
 import { useUIStore } from '../stores/ui.js';
 import { useCheckpointStore } from '../stores/checkpoint.js';
 import { useBootstrapStore } from '../stores/bootstrap.js';
-import { CancelledError } from '../api/client.js';
+import { ApiError, CancelledError } from '../api/client.js';
 import {
   eventHasTerminalRunStatus,
   maxSeqIdFromEvents,
@@ -367,6 +367,27 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
           } catch (error) {
             const isAbortError = error instanceof DOMException && error.name === 'AbortError';
             if (isAbortError || !isCurrentSubscription()) break;
+            // Authentication, authorization, and invalid-session responses
+            // cannot be repaired by replaying the same subscription. Retrying
+            // them forever left the UI in a permanent "恢复连接中" state and
+            // generated a request every 500ms after a session expired. Surface
+            // the existing run error/banner path and stop this subscription;
+            // transient network failures and server errors still reconnect.
+            const isPermanentClientError = error instanceof ApiError
+              && error.code >= 400
+              && error.code < 500
+              && error.code !== 408
+              && error.code !== 429;
+            if (isPermanentClientError) {
+              terminalStatusSeen = true;
+              shouldReloadSession = false;
+              dispatchRunEventToStores({
+                type: 'error',
+                sessionId: options.sessionId,
+                error,
+              });
+              break;
+            }
             console.warn('Run event subscription disconnected; retrying:', error);
             useStreamingStore.getState().updateActivity({
               sessionId: options.sessionId,
