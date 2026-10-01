@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError } from '../api/client.js';
+import { ApiError, CancelledError } from '../api/client.js';
 import { useSessionLifecycle } from '../hooks/useSessionLifecycle.js';
 import { useBootstrapStore } from '../stores/bootstrap.js';
 import { useSessionStore } from '../stores/session.js';
@@ -37,6 +37,7 @@ describe('session lifecycle reconnect errors', () => {
     useBootstrapStore.getState().setCapabilities(capabilities);
     useSessionStore.getState().setCurrentSessionId(null);
     useStreamingStore.getState().resetRun();
+    useStreamingStore.getState().setBanner(null);
   });
 
   it('surfaces permanent subscription auth failures instead of retrying forever', async () => {
@@ -67,5 +68,60 @@ describe('session lifecycle reconnect errors', () => {
       message: expect.stringContaining('Unauthorized'),
       sessionId: 'session-auth-expired',
     });
+  });
+
+  it('does not retry an explicitly aborted subscription', async () => {
+    const subscribeRunEvents = vi.fn().mockRejectedValue(new CancelledError());
+    const actions = lifecycle({
+      listSessionMessages: vi.fn().mockResolvedValue({
+        Messages: [], LatestSeqId: 0, HasMore: false, NextCursor: null,
+      }),
+      listSessionEvents: vi.fn().mockResolvedValue({ Events: [], Total: 0 }),
+      getSession: vi.fn().mockResolvedValue({
+        ActiveRunStatus: 'running', ActiveInvocationId: 'run-1',
+      }),
+      subscribeRunEvents,
+    });
+
+    await actions.loadSession('session-aborted');
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+    expect(subscribeRunEvents).toHaveBeenCalledTimes(1);
+    expect(useStreamingStore.getState().isSessionStreaming('session-aborted')).toBe(false);
+    expect(useStreamingStore.getState().getSessionActivity('session-aborted')).toMatchObject({
+      status: 'stopped',
+    });
+    expect(useStreamingStore.getState().banner).toBeNull();
+  });
+
+  it('stops a pending subscription when its abort signal is triggered', async () => {
+    let signal: AbortSignal | undefined;
+    const subscribeRunEvents = vi.fn((_params, options?: { signal?: AbortSignal }) => {
+      signal = options?.signal;
+      return new Promise<ReadableStream<Uint8Array>>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new CancelledError()), { once: true });
+      });
+    });
+    const actions = lifecycle({
+      listSessionMessages: vi.fn().mockResolvedValue({
+        Messages: [], LatestSeqId: 0, HasMore: false, NextCursor: null,
+      }),
+      listSessionEvents: vi.fn().mockResolvedValue({ Events: [], Total: 0 }),
+      getSession: vi.fn().mockResolvedValue({
+        ActiveRunStatus: 'running', ActiveInvocationId: 'run-1',
+      }),
+      subscribeRunEvents,
+    });
+
+    await actions.loadSession('session-unmount');
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    actions.runSubscriptionAbortRef.current?.abort();
+    await vi.waitFor(() => expect(
+      useStreamingStore.getState().getSessionActivity('session-unmount')?.status,
+    ).toBe('stopped'));
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+    expect(subscribeRunEvents).toHaveBeenCalledTimes(1);
+    expect(useStreamingStore.getState().isSessionStreaming('session-unmount')).toBe(false);
   });
 });
