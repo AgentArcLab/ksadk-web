@@ -140,6 +140,8 @@ export function useFeedback(ctx: UseFeedbackContext) {
       );
       if (!accepted) return false;
 
+      // A terminal approval may arrive while submitDraft is awaiting dispatch.
+      // Only update pending approvals (or legacy entries without a status).
       useMessageStore.getState().patchMessages((prev) =>
         prev.map((message) => {
           const approvalStatus = options.approve ? 'approved' : 'rejected';
@@ -156,6 +158,7 @@ export function useFeedback(ctx: UseFeedbackContext) {
                   Object.entries(message.tools).map(([name, tool]) => [
                     name,
                     tool.approvalRequestId === options.approvalRequestId
+                      && (tool.approvalStatus === undefined || tool.approvalStatus === 'pending')
                       ? {
                           ...tool,
                           status: nextStatus(tool.status),
@@ -167,6 +170,7 @@ export function useFeedback(ctx: UseFeedbackContext) {
               : message.tools,
             blocks: message.blocks?.map((block) =>
               block.type === 'tool' && block.extra?.approvalRequestId === options.approvalRequestId
+                && (block.extra.approvalStatus === undefined || block.extra.approvalStatus === 'pending')
                 ? {
                     ...block,
                     status: nextStatus(block.status),
