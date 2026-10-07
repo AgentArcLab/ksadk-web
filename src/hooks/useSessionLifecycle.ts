@@ -699,17 +699,20 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
       targetAgentId = 'default-agent',
       preferredSessionId: string | null = null,
     ) => {
+      const store = useSessionStore.getState();
+      if (store.sessionsAgentId && store.sessionsAgentId !== targetAgentId) {
+        store.resetSessionPagination(targetAgentId);
+      }
+      const generation = useSessionStore.getState().sessionsGeneration;
+      const isCurrentList = () => useBootstrapStore.getState().agentId === targetAgentId
+        && useSessionStore.getState().sessionsGeneration === generation;
       try {
-        const store = useSessionStore.getState();
-        if (store.sessionsAgentId && store.sessionsAgentId !== targetAgentId) {
-          store.resetSessionPagination(targetAgentId);
-        }
         useSessionStore.getState().setLoadingSessions(true);
         const data = await api.listSessions(targetAgentId, {
           page: 1,
           pageSize: SESSION_LIST_PAGE_SIZE,
         });
-        if (useBootstrapStore.getState().agentId !== targetAgentId) return;
+        if (!isCurrentList()) return;
         const listedSessions = (data.Sessions || []) as Session[];
         for (const listedSession of listedSessions) {
           pendingCreatedSessionAgentsRef.current.delete(listedSession.SessionId);
@@ -752,7 +755,7 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
         if (error instanceof CancelledError) return;
         console.error('Failed to fetch sessions:', error);
       } finally {
-        if (useBootstrapStore.getState().agentId === targetAgentId) {
+        if (isCurrentList()) {
           useSessionStore.getState().setLoadingSessions(false);
         }
       }
@@ -775,12 +778,17 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
     }
     const pageSize = store.sessionsPageSize || SESSION_LIST_PAGE_SIZE;
     const targetAgentId = store.sessionsAgentId || agentIdRef.current || 'default-agent';
+    const isCurrentList = () => useBootstrapStore.getState().agentId === targetAgentId
+      && useSessionStore.getState().sessionsGeneration === store.sessionsGeneration;
     try {
       useSessionStore.getState().setLoadingSessions(true);
       const data = await api.listSessions(targetAgentId, {
         page: nextPage,
         pageSize,
       });
+      // Pagination can finish after navigation, just like the first page.
+      // Keep the former Agent's rows and pagination out of the selected list.
+      if (!isCurrentList()) return;
       useSessionStore.getState().upsertSessions((data.Sessions || []) as Session[], {
         agentId: targetAgentId,
         total: Number(data.Total ?? store.sessionsTotal),
@@ -791,7 +799,7 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
       if (error instanceof CancelledError) return;
       console.error('Failed to load more sessions:', error);
     } finally {
-      useSessionStore.getState().setLoadingSessions(false);
+      if (isCurrentList()) useSessionStore.getState().setLoadingSessions(false);
     }
   }, [api]);
 

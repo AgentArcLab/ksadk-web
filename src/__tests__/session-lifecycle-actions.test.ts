@@ -7,6 +7,8 @@ import { useMessageStore } from '../stores/message.js';
 import { useBootstrapStore } from '../stores/bootstrap.js';
 import type { ApiFacade } from '../core/api/types.js';
 import type { UiCapabilities } from '../types/capabilities.js';
+import type { Session } from '../components/chat/types.js';
+import { CancelledError } from '../api/client.js';
 
 function lifecycle(api: Partial<ApiFacade>, restoreSession = false) {
   let actions!: ReturnType<typeof useSessionLifecycle>;
@@ -39,6 +41,134 @@ describe('shared session lifecycle actions', () => {
     await pending;
     expect(useSessionStore.getState().sessions).toEqual([]);
     expect(useSessionStore.getState().currentSessionId).toBeNull();
+  });
+
+  it('ignores a late pagination page after switching Agents', async () => {
+    let finish!: (value: Awaited<ReturnType<ApiFacade['listSessions']>>) => void;
+    const listSessions = vi.fn(() => new Promise<Awaited<ReturnType<ApiFacade['listSessions']>>>(resolve => { finish = resolve; }));
+    const actions = lifecycle({ listSessions });
+    useSessionStore.getState().upsertSessions([{ SessionId: 'agent-a-first' } as Session], {
+      agentId: 'agent-a', total: 60, page: 1, pageSize: 30,
+    });
+    const pending = actions.loadMoreSessions();
+    expect(listSessions).toHaveBeenCalledWith('agent-a', { page: 2, pageSize: 30 });
+
+    useBootstrapStore.getState().setAgentId('agent-b');
+    useSessionStore.getState().resetSessionPagination('agent-b');
+    useSessionStore.getState().upsertSessions([{ SessionId: 'agent-b-first' } as Session], {
+      agentId: 'agent-b', total: 1, page: 1, pageSize: 30,
+    });
+    finish({ Sessions: [{ SessionId: 'agent-a-second' } as Session], Total: 60, Page: 2, PageSize: 30 });
+    await pending;
+
+    const state = useSessionStore.getState();
+    expect(state.sessions.map(session => session.SessionId)).toEqual(['agent-b-first']);
+    expect(state.sessionsAgentId).toBe('agent-b');
+    expect(state.sessionsTotal).toBe(1);
+    expect(state.loadedPages).toEqual(new Set([1]));
+    expect(state.hasMoreSessions).toBe(false);
+  });
+
+  it.each(['success', 'cancelled', 'failed'] as const)(
+    'does not clear the new Agent loading state when an old pagination request ends: %s', async outcome => {
+      let finish!: (value: Awaited<ReturnType<ApiFacade['listSessions']>>) => void;
+      let fail!: (error: Error) => void;
+      const actions = lifecycle({ listSessions: vi.fn(() => new Promise<Awaited<ReturnType<ApiFacade['listSessions']>>>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      })) });
+      useSessionStore.getState().upsertSessions([{ SessionId: 'agent-a-first' } as Session], {
+        agentId: 'agent-a', total: 60, page: 1, pageSize: 30,
+      });
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const pending = actions.loadMoreSessions();
+      useBootstrapStore.getState().setAgentId('agent-b');
+      useSessionStore.getState().resetSessionPagination('agent-b');
+      useSessionStore.getState().setLoadingSessions(true);
+      if (outcome === 'success') finish({ Sessions: [], Total: 60, Page: 2, PageSize: 30 });
+      else fail(outcome === 'cancelled' ? new CancelledError() : new Error('offline'));
+      await pending;
+      expect(useSessionStore.getState().isLoadingSessions).toBe(true);
+      errorLog.mockRestore();
+    },
+  );
+
+  it.each(['first page', 'next page'] as const)(
+    'ignores an old %s after switching away and back to the same Agent', async page => {
+      let finish!: (value: Awaited<ReturnType<ApiFacade['listSessions']>>) => void;
+      const actions = lifecycle({ listSessions: vi.fn(() => new Promise<Awaited<ReturnType<ApiFacade['listSessions']>>>(resolve => { finish = resolve; })) });
+      useSessionStore.getState().upsertSessions([{ SessionId: 'agent-a-first' } as Session], {
+        agentId: 'agent-a', total: 60, page: 1, pageSize: 30,
+      });
+      const pending = page === 'first page' ? actions.fetchSessions('agent-a') : actions.loadMoreSessions();
+      useBootstrapStore.getState().setAgentId('agent-b');
+      useSessionStore.getState().resetSessionPagination('agent-b');
+      useBootstrapStore.getState().setAgentId('agent-a');
+      useSessionStore.getState().resetSessionPagination('agent-a');
+      useSessionStore.getState().setLoadingSessions(true);
+      finish({ Sessions: [{ SessionId: 'agent-a-stale' } as Session], Total: 60, Page: page === 'first page' ? 1 : 2, PageSize: 30 });
+      await pending;
+      expect(useSessionStore.getState().sessions).toEqual([]);
+      expect(useSessionStore.getState().loadedPages).toEqual(new Set());
+      expect(useSessionStore.getState().isLoadingSessions).toBe(true);
+    },
+  );
+
+  it.each(['first page', 'next page'] as const)(
+    'keeps the newer visit loading when an old %s request is cancelled', async page => {
+      let fail!: (error: Error) => void;
+      const actions = lifecycle({ listSessions: vi.fn(() => new Promise<Awaited<ReturnType<ApiFacade['listSessions']>>>((_resolve, reject) => { fail = reject; })) });
+      useSessionStore.getState().upsertSessions([{ SessionId: 'agent-a-first' } as Session], {
+        agentId: 'agent-a', total: 60, page: 1, pageSize: 30,
+      });
+      const pending = page === 'first page' ? actions.fetchSessions('agent-a') : actions.loadMoreSessions();
+      useBootstrapStore.getState().setAgentId('agent-b');
+      useSessionStore.getState().resetSessionPagination('agent-b');
+      useBootstrapStore.getState().setAgentId('agent-a');
+      useSessionStore.getState().resetSessionPagination('agent-a');
+      useSessionStore.getState().setLoadingSessions(true);
+      fail(new CancelledError());
+      await pending;
+      expect(useSessionStore.getState().isLoadingSessions).toBe(true);
+    },
+  );
+
+  it('appends the current Agent page once and clears its loading state', async () => {
+    let finish!: (value: Awaited<ReturnType<ApiFacade['listSessions']>>) => void;
+    const listSessions = vi.fn(() => new Promise<Awaited<ReturnType<ApiFacade['listSessions']>>>(resolve => { finish = resolve; }));
+    const actions = lifecycle({ listSessions });
+    useSessionStore.getState().upsertSessions([{ SessionId: 'agent-a-first' } as Session], {
+      agentId: 'agent-a', total: 60, page: 1, pageSize: 30,
+    });
+    const pending = actions.loadMoreSessions();
+    expect(useSessionStore.getState().isLoadingSessions).toBe(true);
+    await actions.loadMoreSessions();
+    expect(listSessions).toHaveBeenCalledTimes(1);
+    finish({ Sessions: [{ SessionId: 'agent-a-second' } as Session], Total: 60, Page: 2, PageSize: 30 });
+    await pending;
+
+    const state = useSessionStore.getState();
+    expect(state.sessions.map(session => session.SessionId)).toEqual(['agent-a-first', 'agent-a-second']);
+    expect(state.sessionsAgentId).toBe('agent-a');
+    expect(state.loadedPages).toEqual(new Set([1, 2]));
+    expect(state.isLoadingSessions).toBe(false);
+  });
+
+  it('allows retrying a cancelled current Agent pagination request', async () => {
+    const listSessions = vi.fn()
+      .mockRejectedValueOnce(new CancelledError())
+      .mockResolvedValueOnce({ Sessions: [{ SessionId: 'agent-a-second' } as Session], Total: 60, Page: 2, PageSize: 30 });
+    const actions = lifecycle({ listSessions });
+    useSessionStore.getState().upsertSessions([{ SessionId: 'agent-a-first' } as Session], {
+      agentId: 'agent-a', total: 60, page: 1, pageSize: 30,
+    });
+    await actions.loadMoreSessions();
+    expect(useSessionStore.getState().isLoadingSessions).toBe(false);
+    expect(useSessionStore.getState().loadedPages).toEqual(new Set([1]));
+    await actions.loadMoreSessions();
+    expect(listSessions).toHaveBeenCalledTimes(2);
+    expect(useSessionStore.getState().loadedPages).toEqual(new Set([1, 2]));
+    expect(useSessionStore.getState().isLoadingSessions).toBe(false);
   });
 
   it('coalesces repeated explicit session creation while the request is in flight', async () => {
