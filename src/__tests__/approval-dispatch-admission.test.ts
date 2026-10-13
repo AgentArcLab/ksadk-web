@@ -59,6 +59,33 @@ beforeEach(() => {
 });
 
 describe('legacy approval transport admission', () => {
+  it('does not confirm a kernel receipt that arrives after disconnect', async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({ start(value) { controller = value; } });
+    const subscribeSessionEvents = vi.fn();
+    const engine = new RunEngineImpl({
+      runAgent: vi.fn().mockResolvedValue(body), subscribeSessionEvents,
+    } as never);
+    engine.updateConfig({ agentId: 'agent-a', agentFramework: 'hermes',
+      apiFormats: ['responses'], selectedModel: 'model', thinkingMode: 'auto',
+      kernelSessionEventsEnabled: true });
+    const admitted = vi.fn();
+    engine.start({ text: '', attachments: [], sessionId: 'session-a',
+      responsesInput: [{ type: 'mcp_approval_response', approval_request_id: 'approval-a', approve: true }],
+      onDispatchResult: admitted });
+    await vi.waitFor(() => expect(engine.stage).toBe('streaming'));
+    expect(admitted).not.toHaveBeenCalled();
+    engine.disconnect();
+    controller.enqueue(new TextEncoder().encode(JSON.stringify({
+      Code: 0, Data: { ReceiptStatus: 'accepted', CommandId: 'command-a' },
+    })));
+    controller.close();
+    await vi.waitFor(() => expect(admitted).toHaveBeenCalledWith(false));
+    expect(admitted).toHaveBeenCalledOnce();
+    expect(subscribeSessionEvents).not.toHaveBeenCalled();
+    expect(engine.stage).toBe('idle');
+  });
+
   it.each(['rejected', 'unsupported', 'queue_full'] as const)(
     'does not confirm an HTTP 200 kernel %s receipt', async status => {
       const stream = new ReadableStream<Uint8Array>({ start(controller) {
