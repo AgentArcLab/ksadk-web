@@ -468,7 +468,7 @@ export class RunEngineImpl implements RunEngine {
           await stream.cancel();
           return;
         }
-        reportDispatch(true);
+        if (!this.config.kernelSessionEventsEnabled) reportDispatch(true);
         this.setStage('streaming');
         this.emit({ type: 'activity', phase: '等待首个输出', status: 'waiting', countEvent: false });
 
@@ -477,6 +477,10 @@ export class RunEngineImpl implements RunEngine {
         // AgentKernel path: RunAgent answers with a control receipt (JSON);
         // run output arrives on SubscribeSessionEvents as raw kernel frames.
         const peeked = await peekKernelReceipt(stream);
+        if (this.config.kernelSessionEventsEnabled) {
+          reportDispatch(!peeked.receipt
+            || peeked.receipt.status === 'accepted' || peeked.receipt.status === 'duplicate');
+        }
         let streamResult: StreamConsumeResult;
         if (peeked.receipt) {
           streamResult = await this.consumeKernelRunEvents(
