@@ -59,6 +59,29 @@ beforeEach(() => {
 });
 
 describe('legacy approval transport admission', () => {
+  it.each(['rejected', 'unsupported', 'queue_full'] as const)(
+    'does not confirm an HTTP 200 kernel %s receipt', async status => {
+      const stream = new ReadableStream<Uint8Array>({ start(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({
+          Code: 0, Data: { ReceiptStatus: status, CommandId: 'command-a',
+            Error: { code: status, message: 'Not accepted', retryable: true } },
+        })));
+        controller.close();
+      } });
+      const engine = new RunEngineImpl({ runAgent: vi.fn().mockResolvedValue(stream) } as never);
+      engine.updateConfig({ agentId: 'agent-a', agentFramework: 'hermes',
+        apiFormats: ['responses'], selectedModel: 'model', thinkingMode: 'auto',
+        kernelSessionEventsEnabled: true });
+      const admitted = vi.fn();
+      engine.start({ text: '', attachments: [], sessionId: 'session-a',
+        responsesInput: [{ type: 'mcp_approval_response', approval_request_id: 'approval-a', approve: true }],
+        onDispatchResult: admitted });
+      await vi.waitFor(() => expect(admitted).toHaveBeenCalledWith(false));
+      expect(admitted).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(engine.stage).toBe('idle'));
+    },
+  );
+
   it('does not confirm a delayed HTTP response after disconnect', async () => {
     const request = deferred<ReadableStream<Uint8Array>>();
     const runAgent = vi.fn().mockReturnValue(request.promise);
