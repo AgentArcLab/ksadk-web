@@ -165,6 +165,7 @@ export function useAgentChat(options: AgentChatOptions = {}) {
     queuedDraftRef,
     onRunSettled: refreshSessionsAfterRun,
     conversationIdRef: controller ? activeConversationIdRef : undefined,
+    conversationId,
     onSessionCreated: (sessionId, submittedConversationId, submittedAgentId = agentId) => {
       if (controller && submittedConversationId) controller.bindNative(submittedConversationId as ConversationId, sessionId);
       // A late create belongs to the submitted draft, even after navigation.
