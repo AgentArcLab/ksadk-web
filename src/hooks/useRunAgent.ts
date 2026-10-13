@@ -1,3 +1,5 @@
+import { bootstrapPresentationProfile } from '../core/conversation/agent.js';
+import { agentBlockRendererCatalog } from '../core/conversation/renderer-registry.js';
 import { useRef, useCallback, useEffect, useMemo } from 'react';
 import { useStreamingStore } from '../stores/streaming.js';
 import { useUIStore } from '../stores/ui.js';
@@ -74,11 +76,12 @@ export function useRunAgent(ctx: RunAgentContext) {
       owners.delete(key);
     }
   }, []);
-  // Same-origin canonical transport for Hosted UI. It resolves fetch lazily
-  // so importing the library stays Node/SSR safe.
-  const defaultConversationClient = useMemo(() => new HttpConversationClient(), []);
+  // Only an advertised ConversationSurface selects the same-origin canonical
+  // transport. Older hosted Agents (for example Hermes) expose the legacy
+  // action transport, while their local Studio routes require a local session.
+  const defaultConversationClient = useMemo(() => new HttpConversationClient({rendererCatalog:agentBlockRendererCatalog}), []);
   const conversationClient = ctx.conversationClient === undefined
-    ? defaultConversationClient
+    ? (ctx.uiCapabilities.ConversationSurface == null ? null : defaultConversationClient)
     : ctx.conversationClient;
 
   const {
@@ -106,6 +109,8 @@ export function useRunAgent(ctx: RunAgentContext) {
       requireResumableRun: Boolean(uiCapabilities.RunLifecycle?.Enabled && uiCapabilities.RunLifecycle.Resume),
     }),
     checkpointResumePreviewEnabled: Boolean(uiCapabilities.RunLifecycle?.CheckpointResumePreview),
+    kernelSessionEventsEnabled: uiCapabilities.KernelSessionEvents === true,
+    presentationProfile: bootstrapPresentationProfile(uiCapabilities.ConversationSurface, agentBlockRendererCatalog),
     conversationClient: conversationClient || undefined,
   }), [agentId, apiFormats, agentFramework, selectedModel, selectedModelMetadata, thinkingMode, permissionMode, uiCapabilities, conversationClient]);
 
@@ -249,6 +254,11 @@ export function useRunAgent(ctx: RunAgentContext) {
     }
     if (!owner.sessionId && pendingSessionId) owner.sessionId = pendingSessionId;
 
+    let confirmDispatch: ((accepted: boolean) => void) | undefined;
+    const dispatch = responsesInput !== undefined
+      ? new Promise<boolean>(resolve => { confirmDispatch = resolve; })
+      : null;
+
     const launch = (): boolean => {
       if (owner.engine.stage !== 'idle') return false;
       owner.engine.updateConfig(config);
@@ -284,10 +294,12 @@ export function useRunAgent(ctx: RunAgentContext) {
           if (wasVisible) writePersistedSessionId(owner.agentId, sessionId);
         },
         onSessionUpsert: () => {},
+        onDispatchResult: confirmDispatch,
         onSettled: (sessionId, outcome = 'unknown') => {
           if (outboxEntry) outboxRequestsRef.current.delete(outboxEntry.requestId);
           if (outboxEntry && ledger) ledger.update(outboxEntry.requestId, {
-            status: outcome === 'completed' ? 'completed' : outcome === 'cancelled' ? 'cancelled' : outcome === 'failed' ? 'failed' : 'unknown',
+            // The outbox tracks delivery: an actionable approval proves the input was accepted.
+            status: outcome === 'completed' || outcome === 'awaiting-input' ? 'completed' : outcome === 'cancelled' ? 'cancelled' : outcome === 'failed' ? 'failed' : 'unknown',
           });
           onRunSettled?.(sessionId, owner.agentId, outcome);
           if (outcome === 'completed') drainQueue(owner);
@@ -305,6 +317,10 @@ export function useRunAgent(ctx: RunAgentContext) {
       // because replaying them against a later run could approve the wrong
       // request; callers need the false result to keep the interaction retryable.
       return true;
+    }
+    if (dispatch) {
+      if (!started) confirmDispatch?.(false);
+      return dispatch;
     }
     return started;
   }, [appendOptimisticAssistant, appendOptimisticMessage, config, currentSessionIdRef, drainQueue, getOwner, onRunSettled, onSessionCreated, outbox, publishQueue, waitForPendingSessionCreation]);
@@ -333,9 +349,9 @@ export function useRunAgent(ctx: RunAgentContext) {
 
       const accepted = engine.resumeCheckpoint({
         ...params,
-        onSettled: (sessionId) => {
-          onRunSettled?.(sessionId, owner.agentId);
-          drainQueue(owner);
+        onSettled: (sessionId, outcome) => {
+          onRunSettled?.(sessionId, owner.agentId, outcome);
+          if (outcome === 'completed') drainQueue(owner);
         },
       });
       if (!accepted) {

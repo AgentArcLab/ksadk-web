@@ -92,6 +92,9 @@ export type RunEngineConfig = {
   runtimeCapabilityMatrix?: RuntimeCapabilityMatrix;
   hostedChatTransport?: HostedChatTransport;
   checkpointResumePreviewEnabled?: boolean;
+  /** RunAgent receipt + canonical SubscribeSessionEvents supported by this endpoint. */
+  kernelSessionEventsEnabled?: boolean;
+  presentationProfile?: 'flat-v1' | 'agent-block-v1';
   /** Optional headless ConversationSurface/Input/Item v1 transport. */
   conversationClient?: ConversationClient;
 };
@@ -110,6 +113,8 @@ export interface RunEngine {
     onSessionCreated?: (sessionId: string) => void;
     onInvocationCreated?: (invocationId: string) => void;
     onSessionUpsert?: (sessionId: string) => void;
+    /** Legacy Responses HTTP admission, before the output stream finishes. */
+    onDispatchResult?: (accepted: boolean) => void;
     onSettled?: (sessionId: string | null, outcome?: RunSettlement) => void;
   }): boolean;
   disconnect(): void;
@@ -142,7 +147,7 @@ export interface RunEngine {
   subscribe(listener: (event: RunEvent) => void): () => void;
 }
 
-export type RunSettlement = 'completed' | 'failed' | 'cancelled' | 'unknown';
+export type RunSettlement = 'completed' | 'awaiting-input' | 'failed' | 'cancelled' | 'unknown';
 
 /**
  * agent-kernel/v1 control surface state. `accepted`/`duplicate` receipts move
