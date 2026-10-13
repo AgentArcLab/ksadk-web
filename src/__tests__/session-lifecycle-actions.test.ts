@@ -44,6 +44,35 @@ describe('shared session lifecycle actions', () => {
     expect(useSessionStore.getState().currentSessionId).toBeNull();
   });
 
+  it('keeps a local draft when the initial list and later refresh return older sessions', async () => {
+    let finish!: (value: Awaited<ReturnType<ApiFacade['listSessions']>>) => void;
+    const listSessionMessages = vi.fn(async () => ({ Messages: [] }));
+    const listSessions = vi.fn(() => new Promise<Awaited<ReturnType<ApiFacade['listSessions']>>>(
+      resolve => { finish = resolve; },
+    ));
+    const actions = lifecycle({ listSessions, listSessionMessages }, true);
+    const pending = actions.fetchSessions('agent-a');
+    actions.startNewConversation();
+    finish({ Sessions: [{ SessionId: 'older' } as Session], Total: 1 });
+    await pending;
+    expect(useSessionStore.getState().currentSessionId).toBeNull();
+    expect(listSessionMessages).not.toHaveBeenCalled();
+    expect(useMessageStore.getState().messages).toEqual([]);
+
+    const refreshed = actions.fetchSessions('agent-a');
+    finish({ Sessions: [{ SessionId: 'older' } as Session], Total: 1 });
+    await refreshed;
+    expect(useSessionStore.getState().sessions.map(session => session.SessionId)).toEqual(['older']);
+    expect(useSessionStore.getState().currentSessionId).toBeNull();
+    expect(listSessionMessages).not.toHaveBeenCalled();
+
+    actions.adoptCreatedSession('first-sent');
+    const settled = actions.fetchSessions('agent-a');
+    finish({ Sessions: [{ SessionId: 'older' } as Session], Total: 1 });
+    await settled;
+    expect(useSessionStore.getState().currentSessionId).toBe('first-sent');
+  });
+
   it('ignores a late pagination page after switching Agents', async () => {
     let finish!: (value: Awaited<ReturnType<ApiFacade['listSessions']>>) => void;
     const listSessions = vi.fn(() => new Promise<Awaited<ReturnType<ApiFacade['listSessions']>>>(resolve => { finish = resolve; }));

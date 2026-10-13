@@ -169,6 +169,7 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
   // refresh cannot evict the active transcript in that short window.
   const pendingCreatedSessionAgentsRef = useRef(new Map<string, string>());
   const sessionCreationPromiseRef = useRef<Promise<string | null> | null>(null);
+  const localDraftAgentRef = useRef<string | null>(null);
   const loadSessionRef = useRef<((sessionId: string) => Promise<void>) | null>(null);
   const fetchSessionsRef = useRef<
     ((
@@ -470,6 +471,7 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
 
   const loadSession = useCallback(
     async (sessionId: string) => {
+      localDraftAgentRef.current = null;
       // Bootstrap can invoke the initial list callback before React replaces
       // its closure. Read the committed capabilities for this Agent, then
       // freeze the selected profile for this history read and its pages.
@@ -747,9 +749,9 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
         });
         // A manual “new conversation” can overlap the initial ListSessions
         // request. Do not let that older response restore a previous session
-        // while CreateSession is still resolving: doing so starts a stale
-        // history hydrate that can replace the just-rendered optimistic turn.
-        if (sessionCreationPromiseRef.current) {
+        // while CreateSession is resolving or a local draft is selected: a
+        // draft intentionally has no server session until its first send.
+        if (sessionCreationPromiseRef.current || localDraftAgentRef.current === targetAgentId) {
           return;
         }
         const sorted = useSessionStore.getState().sessions;
@@ -823,6 +825,7 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
   }, [fetchSessions]);
 
   const adoptCreatedSession = useCallback((newId: string, preserveMessages = false) => {
+    localDraftAgentRef.current = null;
     loadSessionGenerationRef.current += 1;
     runSubscriptionAbortRef.current?.abort();
     pendingCreatedSessionAgentsRef.current.set(newId, agentIdRef.current);
@@ -846,6 +849,7 @@ export function useSessionLifecycle(ctx: SessionLifecycleContext) {
   }, [isMobile]);
 
   const startNewConversation = useCallback(() => {
+    localDraftAgentRef.current = agentIdRef.current;
     loadSessionGenerationRef.current += 1;
     runSubscriptionAbortRef.current?.abort();
     // Navigation creates a local draft; it must not disconnect an execution

@@ -4,6 +4,7 @@
 
 - Confirm legacy Responses approval dispatch only after the HTTP request is accepted. Failed or cancelled dispatch keeps the approval retryable without waiting for the output stream to finish.
 - Fix strict TypeScript and React lint errors while preserving Teams schema validation and current-session cancellation checks. CI now checks application types, lint, Node tests, library builds, and browser interaction ownership on feature branches.
+- Preserve a newly opened local draft when delayed session lists or refreshes return older conversations; create its server session on first send.
 
 ## 0.3.8 - 2026-09-11
 
