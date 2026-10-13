@@ -145,7 +145,7 @@ export function useFeedback(ctx: UseFeedbackContext) {
       useMessageStore.getState().patchMessages((prev) =>
         prev.map((message) => {
           const approvalStatus = options.approve ? 'approved' : 'rejected';
-          const nextStatus = (status: 'running' | 'completed' | 'error' | 'paused') =>
+          const nextStatus = (status: 'running' | 'completed' | 'error' | 'paused' | 'unknown') =>
             options.approve && status === 'paused'
               ? 'running' as const
               : !options.approve
