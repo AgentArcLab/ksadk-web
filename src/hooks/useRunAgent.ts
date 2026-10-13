@@ -44,6 +44,8 @@ type RunAgentContext = {
   onSessionCreated?: (sessionId: string, conversationId?: string, agentId?: string) => void;
   /** Stable owner before native creation. Omit for the legacy Hosted shell. */
   conversationIdRef?: React.MutableRefObject<ConversationId | undefined>;
+  /** Reactive selected owner, including null-to-null native draft switches. */
+  conversationId?: ConversationId;
   waitForPendingSessionCreation?: () => Promise<string | null>;
   /** `null` keeps an embedded host on the legacy action transport. */
   conversationClient?: ConversationClient | null;
@@ -163,14 +165,14 @@ export function useRunAgent(ctx: RunAgentContext) {
   }, [publishQueue]);
 
   useEffect(() => {
-    const key = JSON.stringify([agentId, conversationIdRef?.current || ctx.currentSessionId || 'new-session']);
+    const key = JSON.stringify([agentId, ctx.conversationId || conversationIdRef?.current || ctx.currentSessionId || 'new-session']);
     const owner = ownersRef.current.get(key);
     if (owner) publishQueue(owner);
     else {
       queuedDraftRef.current = [];
       useUIStore.getState().setQueuedDrafts([]);
     }
-  }, [agentId, ctx.currentSessionId, conversationIdRef, publishQueue, queuedDraftRef]);
+  }, [agentId, ctx.currentSessionId, ctx.conversationId, conversationIdRef, publishQueue, queuedDraftRef]);
 
   const appendOptimisticMessage = useCallback((draft: Pick<QueuedDraft, 'text' | 'attachments'>) => {
     const trimmedText = draft.text.trim();
