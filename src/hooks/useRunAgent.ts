@@ -254,6 +254,11 @@ export function useRunAgent(ctx: RunAgentContext) {
     }
     if (!owner.sessionId && pendingSessionId) owner.sessionId = pendingSessionId;
 
+    let confirmDispatch: ((accepted: boolean) => void) | undefined;
+    const dispatch = responsesInput !== undefined
+      ? new Promise<boolean>(resolve => { confirmDispatch = resolve; })
+      : null;
+
     const launch = (): boolean => {
       if (owner.engine.stage !== 'idle') return false;
       owner.engine.updateConfig(config);
@@ -289,6 +294,7 @@ export function useRunAgent(ctx: RunAgentContext) {
           if (wasVisible) writePersistedSessionId(owner.agentId, sessionId);
         },
         onSessionUpsert: () => {},
+        onDispatchResult: confirmDispatch,
         onSettled: (sessionId, outcome = 'unknown') => {
           if (outboxEntry) outboxRequestsRef.current.delete(outboxEntry.requestId);
           if (outboxEntry && ledger) ledger.update(outboxEntry.requestId, {
@@ -311,6 +317,10 @@ export function useRunAgent(ctx: RunAgentContext) {
       // because replaying them against a later run could approve the wrong
       // request; callers need the false result to keep the interaction retryable.
       return true;
+    }
+    if (dispatch) {
+      if (!started) confirmDispatch?.(false);
+      return dispatch;
     }
     return started;
   }, [appendOptimisticAssistant, appendOptimisticMessage, config, currentSessionIdRef, drainQueue, getOwner, onRunSettled, onSessionCreated, outbox, publishQueue, waitForPendingSessionCreation]);

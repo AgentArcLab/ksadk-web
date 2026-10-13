@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Confirm legacy Responses approval dispatch only after the HTTP request is accepted. Failed or cancelled dispatch keeps the approval retryable without waiting for the output stream to finish.
+
 ## 0.3.8 - 2026-09-11
 
 - Add the componentized Agent Teams contracts, client, workspace components,
