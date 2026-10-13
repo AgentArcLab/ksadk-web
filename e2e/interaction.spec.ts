@@ -240,7 +240,7 @@ function historyWithApproval(status = 'paused') {
 
 async function createSession(page) {
   await page.goto('/');
-  await expect(page.getByText('Interaction Fixture')).toBeVisible();
+  await expect(page.getByText('Interaction Fixture', { exact: true })).toBeVisible();
   const composer = page.getByPlaceholder('发送消息…');
   await composer.fill('hello');
   await composer.press('Enter');
