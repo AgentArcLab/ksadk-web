@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fix strict TypeScript and React lint errors while preserving Teams schema validation and current-session cancellation checks. CI now checks application types, lint, Node tests, library builds, and browser interaction ownership on feature branches.
+
 ## 0.3.8 - 2026-09-11
 
 - Add the componentized Agent Teams contracts, client, workspace components,

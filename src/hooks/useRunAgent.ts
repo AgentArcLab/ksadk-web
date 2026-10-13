@@ -93,6 +93,7 @@ export function useRunAgent(ctx: RunAgentContext) {
     thinkingMode,
     permissionMode,
     currentSessionIdRef,
+    conversationIdRef,
     queuedDraftRef,
     onRunSettled,
     onSessionCreated,
@@ -162,14 +163,14 @@ export function useRunAgent(ctx: RunAgentContext) {
   }, [publishQueue]);
 
   useEffect(() => {
-    const key = JSON.stringify([agentId, ctx.conversationIdRef?.current || ctx.currentSessionId || 'new-session']);
+    const key = JSON.stringify([agentId, conversationIdRef?.current || ctx.currentSessionId || 'new-session']);
     const owner = ownersRef.current.get(key);
     if (owner) publishQueue(owner);
     else {
       queuedDraftRef.current = [];
       useUIStore.getState().setQueuedDrafts([]);
     }
-  }, [agentId, ctx.currentSessionId, ctx.conversationIdRef?.current, publishQueue, queuedDraftRef]);
+  }, [agentId, ctx.currentSessionId, conversationIdRef, publishQueue, queuedDraftRef]);
 
   const appendOptimisticMessage = useCallback((draft: Pick<QueuedDraft, 'text' | 'attachments'>) => {
     const trimmedText = draft.text.trim();
