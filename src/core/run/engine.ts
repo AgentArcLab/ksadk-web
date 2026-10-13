@@ -477,6 +477,11 @@ export class RunEngineImpl implements RunEngine {
         // AgentKernel path: RunAgent answers with a control receipt (JSON);
         // run output arrives on SubscribeSessionEvents as raw kernel frames.
         const peeked = await peekKernelReceipt(stream);
+        if (this.operationEpoch !== operationEpoch || this.abortController?.signal.aborted) {
+          reportDispatch(false);
+          await peeked.stream.cancel();
+          return;
+        }
         if (this.config.kernelSessionEventsEnabled) {
           reportDispatch(!peeked.receipt
             || peeked.receipt.status === 'accepted' || peeked.receipt.status === 'duplicate');
