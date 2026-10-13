@@ -24,7 +24,10 @@ type UseInteractionsContext = {
   interactionV1Enabled: boolean;
   onAcceptedInteraction?: (interaction: Interaction) => void;
   /** 0.3.1 fallback: official `mcp_approval_response` submission. */
-  legacyResponsesApproval?: (approvalRequestId: string, approve: boolean) => void;
+  legacyResponsesApproval?: (
+    approvalRequestId: string,
+    approve: boolean,
+  ) => boolean | void | Promise<boolean | void>;
   /** 0.3.1 fallback: AG-UI `resumeAguiInterrupt`. */
   legacyAguiResume?: (
     interruptId: string,

@@ -22,7 +22,7 @@ type UseFeedbackContext = {
     attachments: File[],
     responsesInput?: unknown,
     previousResponseId?: string,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
 };
 
 export function useFeedback(ctx: UseFeedbackContext) {
@@ -120,16 +120,32 @@ export function useFeedback(ctx: UseFeedbackContext) {
   );
 
   const respondToApproval = useCallback(
-    (options: {
+    async (options: {
       approvalRequestId: string;
       approve: boolean;
       previousResponseId?: string;
-    }) => {
-      if (!options.approvalRequestId || isStreaming) return;
+    }): Promise<boolean> => {
+      if (!options.approvalRequestId || isStreaming) return false;
+      const accepted = await submitDraft(
+        '',
+        [],
+        [
+          {
+            type: 'mcp_approval_response',
+            approval_request_id: options.approvalRequestId,
+            approve: options.approve,
+          },
+        ],
+        options.previousResponseId,
+      );
+      if (!accepted) return false;
+
+      // A terminal approval may arrive while submitDraft is awaiting dispatch.
+      // Only update pending approvals (or legacy entries without a status).
       useMessageStore.getState().patchMessages((prev) =>
         prev.map((message) => {
           const approvalStatus = options.approve ? 'approved' : 'rejected';
-          const nextStatus = (status: 'running' | 'completed' | 'error' | 'paused') =>
+          const nextStatus = (status: 'running' | 'completed' | 'error' | 'paused' | 'unknown') =>
             options.approve && status === 'paused'
               ? 'running' as const
               : !options.approve
@@ -142,6 +158,7 @@ export function useFeedback(ctx: UseFeedbackContext) {
                   Object.entries(message.tools).map(([name, tool]) => [
                     name,
                     tool.approvalRequestId === options.approvalRequestId
+                      && (tool.approvalStatus === undefined || tool.approvalStatus === 'pending')
                       ? {
                           ...tool,
                           status: nextStatus(tool.status),
@@ -153,6 +170,7 @@ export function useFeedback(ctx: UseFeedbackContext) {
               : message.tools,
             blocks: message.blocks?.map((block) =>
               block.type === 'tool' && block.extra?.approvalRequestId === options.approvalRequestId
+                && (block.extra.approvalStatus === undefined || block.extra.approvalStatus === 'pending')
                 ? {
                     ...block,
                     status: nextStatus(block.status),
@@ -163,18 +181,7 @@ export function useFeedback(ctx: UseFeedbackContext) {
           };
         }),
       );
-      void submitDraft(
-        '',
-        [],
-        [
-          {
-            type: 'mcp_approval_response',
-            approval_request_id: options.approvalRequestId,
-            approve: options.approve,
-          },
-        ],
-        options.previousResponseId,
-      );
+      return true;
     },
     [isStreaming, submitDraft],
   );
