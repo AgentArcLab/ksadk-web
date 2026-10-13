@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Refresh the visible send queue when switching between unbound drafts, while retaining each background queue under its original conversation owner.
 - Fix strict TypeScript and React lint errors while preserving Teams schema validation and current-session cancellation checks. CI now checks application types, lint, Node tests, library builds, and browser interaction ownership on feature branches.
 
 ## 0.3.8 - 2026-09-11
